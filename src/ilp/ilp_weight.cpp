@@ -291,7 +291,6 @@ ilp::ilp_problem_t* weighted_converter_t::execute() const
     add_constraints_for_cost();
     _check_timeout;
 
-    // Dynamic weighting.
     for(auto n: graph->nodes()) {
         const literal_t &l = n.literal();
 
@@ -300,30 +299,58 @@ ilp::ilp_problem_t* weighted_converter_t::execute() const
 
             term_t unify_from = l.terms[1];
 
-            for(auto eq_n: *graph->search_nodes_with_term(unify_from)) {
-                if(!graph->node(eq_n).is_equality_node()) continue;
-
-                // Unifier is heuristically determined.
-                term_t unify_to = graph->node(eq_n).literal().terms[0] == unify_from ? graph->node(eq_n).literal().terms[1] : graph->node(eq_n).literal().terms[0];
-
-                if(!unify_to.is_constant()) continue;
-
-                std::string query = util::format("%s,%s,%s", graph->name().substr(graph->name().find("::")+2).c_str(), std::string(unify_to).c_str(), std::string(l.terms[2]).c_str());
+            if(unify_from.is_constant()) {
+                std::string action = std::string(l.terms[2]);
+                std::string query = util::format("%s,%s,%s", graph->name().substr(graph->name().find("::")+2).c_str(), std::string(unify_from).c_str(), action.c_str());
                 auto w = m_dynamic_weight_map.find(query);
-                double dcost = 10.0;
-
-                if(w != m_dynamic_weight_map.end())
-                    dcost = exp(w->second);
+                double dcost = exp(
+                    w == m_dynamic_weight_map.end() ?
+                    2.19 : w->second);
 
                 // Add dynamic weight to this unification.
                 ilp::variable_idx_t costvar =
                     prob->add_variable(ilp::variable_t(query, dcost));
 
-                ilp::constraint_t costvar_c(query, ilp::OPR_LESS_EQ, 1.0);
+                ilp::constraint_t costvar_c(query, ilp::OPR_LESS_EQ, 0.0);
                 costvar_c.add_term(costvar, -1.0);
                 costvar_c.add_term(prob->find_variable_with_node(n.index()),  1.0);
-                costvar_c.add_term(prob->find_variable_with_node(eq_n),  1.0);
                 prob->add_constraint(costvar_c);
+
+                util::print_console_fmt("%s:%f", query.c_str(), dcost);
+
+            } else {
+                for(auto eq_n: *graph->search_nodes_with_term(unify_from)) {
+                    if(!graph->node(eq_n).is_equality_node()) continue;
+
+                    // Variation part is heuristically determined.
+                    term_t unify_to = graph->node(eq_n).literal().terms[0] == unify_from ? graph->node(eq_n).literal().terms[1] : graph->node(eq_n).literal().terms[0];
+
+                    if(!unify_to.is_constant()) continue;
+
+                    std::string action = std::string(l.terms[2]);
+                    // if(action == "GoLeft" || action == "GoRight") {
+                    //     action = "C_lane-change";
+                    // }
+
+                    std::string query = util::format("%s,%s,%s", graph->name().substr(graph->name().find("::")+2).c_str(), std::string(unify_to).c_str(), action.c_str());
+                    auto w = m_dynamic_weight_map.find(query);
+                    double dcost = exp(
+                        w == m_dynamic_weight_map.end() ?
+                        2.19 : w->second);
+
+                    // Add dynamic weight to this unification.
+                    ilp::variable_idx_t costvar =
+                        prob->add_variable(ilp::variable_t(query, dcost));
+
+                    ilp::constraint_t costvar_c(query, ilp::OPR_LESS_EQ, 1.0);
+                    costvar_c.add_term(costvar, -1.0);
+                    costvar_c.add_term(prob->find_variable_with_node(n.index()),  1.0);
+                    costvar_c.add_term(prob->find_variable_with_node(eq_n),  1.0);
+                    prob->add_constraint(costvar_c);
+
+                    util::print_console_fmt("%s:%f", query.c_str(), dcost);
+                }
+
             }
         }
     }
@@ -438,8 +465,9 @@ int weighted_converter_t::tune(
         // Update the current weight.
         std::vector<double> weights((*m_weight_provider)(graph, e));
         bool fPromote = prob->edge_is_active(gold, e);
-        double update = fPromote ? -1.0 : 1.0, objdiff = gold.value_of_objective_function() - sys.value_of_objective_function();
-        update *= objdiff;
+        double update, direction = fPromote ? -1.0 : 1.0, objdiff = gold.value_of_objective_function() - sys.value_of_objective_function();
+        objdiff = std::max(1.0, objdiff);
+        update  = 0.1 * direction * objdiff;
 
         util::print_console((fPromote ? "PROMOTE: " : "SUPPRESS: ") + graph->edge_to_string(e));
 

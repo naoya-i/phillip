@@ -255,7 +255,7 @@ inline bool phillip_main_t::is_excluded(const std::string &name) const
 
 inline bool phillip_main_t::check_validity() const
 {
-    bool can_infer = 
+    bool can_infer =
         (m_lhs_enumerator != NULL) and
         (m_ilp_convertor != NULL) and
         (m_ilp_solver != NULL);

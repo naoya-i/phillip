@@ -119,7 +119,7 @@ inline const hash_map<term_t, term_t>& unifier_t::mapping() const
 inline void unifier_t::add(term_t x, term_t y)
 {
     if (x == y) return;
-    if (x < y) std::swap(x, y);
+    //if (x < y) std::swap(x, y);
 
     literal_t added("=", x, y);
     m_substitutions.insert(added);
@@ -399,7 +399,7 @@ inline int proof_graph_t::get_depth_of_deepest_node(hypernode_idx_t idx) const
 
 
 }
-    
+
 }
 
 

@@ -155,6 +155,7 @@ private:
     ilp::ilp_problem_t *m_ilp;
     ilp::ilp_problem_t *m_ilp_gold;
     std::vector<ilp::ilp_solution_t> m_sol;
+    std::vector<ilp::ilp_solution_t> m_sol_all;
     std::vector<ilp::ilp_solution_t> m_sol_gold;
 
     // ---- FOR MEASURE TIME

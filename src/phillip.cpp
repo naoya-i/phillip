@@ -74,23 +74,82 @@ std::ofstream* _open_file(const std::string &path, std::ios::openmode mode)
 
 int phillip_main_t::infer(const lf::input_t &input)
 {
-    reset_for_inference();
-    set_input(input);
+    // Search for possible choice.
+    std::vector<std::pair<term_t, std::vector<term_t>>> choice;
 
-    auto begin = std::chrono::system_clock::now();
+    m_sol_all.clear();
 
-    execute_enumerator();
-    execute_convertor();
-    execute_solver();
+    for(auto l: input.obs.get_all_literals()) {
+        if(l->predicate == ":choice") {
+            std::vector<term_t> instantiations;
 
-    m_time_for_infer = util::duration_time(begin);
+            for(auto i=1; i<l->terms.size(); i++) {
+                instantiations.push_back(l->terms[i]);
+            }
 
-    std::ofstream *fo(NULL);
-    if ((fo = _open_file(param("path_out"), std::ios::out | std::ios::app)) != NULL)
-    {
-        for (auto sol = m_sol.begin(); sol != m_sol.end(); ++sol)
-            sol->print_graph(fo);
-        delete fo;
+            choice.push_back(make_pair(l->terms[0], instantiations));
+        }
+    }
+
+    int num_choice = 1;
+
+    for(auto i=0; i<choice.size(); i++)
+        num_choice *= choice[i].second.size();
+
+    for(auto i=0; i<num_choice; i++) {
+        lf::input_t dup_input(input);
+        std::vector<literal_t> dup_obs;
+        pg::unifier_t uni;
+        int accum = 1;
+
+        // Create a substitution.
+        for(auto j=0; j<choice.size(); j++) {
+            int idx = (i / accum) % choice[j].second.size();
+
+            // Replace a variable with a constant choice.
+            uni.add(choice[j].first, choice[j].second[idx]);
+
+            accum *= choice[j].second.size();
+        }
+
+        // Apply and replace.
+        for(auto j=0; j<dup_input.obs.branches().size(); j++) {
+            literal_t l(dup_input.obs.branch(j).literal());
+
+            if(l.predicate == ":choice")
+                continue;
+
+            uni(&l);
+            dup_obs.push_back(l);
+        }
+
+        dup_input.obs = lf::logical_function_t(lf::OPR_AND, dup_obs);
+
+        util::print_console_fmt("Binding applied: %s", uni.to_string().c_str());
+
+        reset_for_inference();
+        set_input(dup_input);
+
+        auto begin = std::chrono::system_clock::now();
+
+        execute_enumerator();
+        execute_convertor();
+        execute_solver();
+
+        m_time_for_infer = util::duration_time(begin);
+
+        for(auto j=0; j<m_sol.size(); j++)
+            m_sol_all.push_back(m_sol[j]);
+
+        std::ofstream *fo(NULL);
+        if ((fo = _open_file(param("path_out"), std::ios::out | std::ios::app)) != NULL)
+        {
+            for (auto sol = m_sol.begin(); sol != m_sol.end(); ++sol)
+                sol->print_graph(fo);
+
+            delete fo;
+        }
+
     }
 
     return 0;
@@ -113,12 +172,8 @@ int phillip_main_t::learn(const lf::input_t &input)
         return path;
     };
 
-    reset_for_inference();
-    set_input(input);
 
     auto begin = std::chrono::system_clock::now();
-
-    execute_enumerator();
 
     // Purely predict (with tie-care).
     assert(flag("kbest"));
@@ -129,8 +184,9 @@ int phillip_main_t::learn(const lf::input_t &input)
         set_param("kbest_k", "1");
 
     erase_flag("get_pseudo_positive");
-    execute_convertor();
-    execute_solver();
+
+    // Perform inference.
+    infer(input);
 
     util::xml_element_t elem("learn", "");
     int num_updates = 0;
@@ -141,8 +197,8 @@ int phillip_main_t::learn(const lf::input_t &input)
     int good_sol = -1;
     std::vector<int> bad_sols;
 
-    for(auto i=0; i<m_sol.size(); i++) {
-        if(m_sol[i].contains(get_latent_hypotheses_set()->requirements())) {
+    for(auto i=0; i<m_sol_all.size(); i++) {
+        if(m_sol_all[i].contains(get_latent_hypotheses_set()->requirements())) {
             good_sol = i;
         } else {
             bad_sols.push_back(i);
@@ -156,31 +212,19 @@ int phillip_main_t::learn(const lf::input_t &input)
         execute_convertor();
         execute_solver();
 
-        good_sol = m_sol.size()-1;
+        good_sol = m_sol_all.size()-1;
     }
 
     // Update the weights.
     for(auto bad_sol: bad_sols) {
-        if(m_sol[bad_sol].value_of_objective_function() - m_sol[good_sol].value_of_objective_function() > param_float("margin", 0.0)) continue;
+        if(m_sol_all[bad_sol].value_of_objective_function() - m_sol_all[good_sol].value_of_objective_function() > param_float("margin", 0.0)) continue;
 
-        util::print_console_fmt("Margin: %f", m_sol[bad_sol].value_of_objective_function() - m_sol[good_sol].value_of_objective_function());
+        util::print_console_fmt("Margin: %f", m_sol_all[bad_sol].value_of_objective_function() - m_sol_all[good_sol].value_of_objective_function());
 
-        num_updates += m_ilp_convertor->tune(m_sol[bad_sol], m_sol[good_sol], &elem);
+        num_updates += m_ilp_convertor->tune(m_sol_all[bad_sol], m_sol_all[good_sol], &elem);
     }
 
-    m_time_for_learn = util::duration_time(begin);
-
-    std::ofstream *fo(NULL);
-    if ((fo = _open_file(param("path_out"), std::ios::out | std::ios::app)) != NULL)
-    {
-        if (not flag("omit_proof_graph_from_xml"))
-        {
-          for (auto sol = m_sol.begin(); sol != m_sol.end(); ++sol)
-              sol->print_graph(fo);
-        }
-        elem.print(fo);
-        delete fo;
-    }
+    //m_time_for_learn = util::duration_time(begin);
 
     return std::min(num_updates, 1);
 }

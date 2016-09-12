@@ -3,6 +3,7 @@
 
 #include <sstream>
 #include <set>
+#include <iomanip>
 
 #include "./ilp_problem.h"
 #include "./phillip.h"
@@ -841,6 +842,9 @@ void ilp_problem_t::print_solution(
     case ilp::SOLUTION_NOT_AVAILABLE: state = "not-available"; break;
     }
     assert(not state.empty());
+
+    (*os)
+        << std::fixed << std::setprecision(8) << std::flush;
 
     (*os)
         << "<proofgraph name=\"" << name()
